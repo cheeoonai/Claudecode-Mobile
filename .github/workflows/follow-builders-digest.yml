@@ -1,0 +1,64 @@
+name: Follow Builders Daily Digest
+
+on:
+  schedule:
+    # 22:00 UTC = 06:00 Asia/Singapore (UTC+8) the next day
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: follow-builders-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Clone follow-builders skill
+        run: git clone --depth 1 https://github.com/zarazhangrui/follow-builders.git "$HOME/.claude/skills/follow-builders"
+
+      - name: Install skill dependencies
+        working-directory: ${{ github.workspace }}
+        run: cd "$HOME/.claude/skills/follow-builders/scripts" && npm install --no-audit --no-fund
+
+      - name: Install Anthropic SDK
+        run: npm install --no-save --no-audit --no-fund @anthropic-ai/sdk@^0.40.0
+
+      - name: Write user config
+        env:
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          mkdir -p "$HOME/.follow-builders"
+          cat > "$HOME/.follow-builders/config.json" <<EOF
+          {
+            "language": "en",
+            "frequency": "daily",
+            "timezone": "Asia/Singapore",
+            "deliveryTime": "06:00",
+            "delivery": {
+              "method": "telegram",
+              "chatId": "${TELEGRAM_CHAT_ID}"
+            }
+          }
+          EOF
+
+      - name: Generate and deliver digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          node .github/scripts/run-digest.mjs > /tmp/digest.txt
+          if [ -s /tmp/digest.txt ]; then
+            node "$HOME/.claude/skills/follow-builders/scripts/deliver.js" --file /tmp/digest.txt
+          else
+            echo "No new content — skipping delivery."
+          fi
